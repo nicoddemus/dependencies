@@ -3,12 +3,14 @@ from __future__ import absolute_import
 from rest_framework.generics import GenericAPIView
 from rest_framework.generics import ListAPIView
 from rest_framework.generics import RetrieveAPIView
+from rest_framework.settings import api_settings
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.viewsets import ViewSet
 
 from _dependencies.contrib.django import apply_http_methods
+from _dependencies.contrib.django import build_view_property
 from _dependencies.contrib.django import create_handler
 from _dependencies.exceptions import DependencyError
 from _dependencies.this import this
@@ -112,20 +114,32 @@ def model_view_set(injector):
     return injector.let(as_viewset=lambda: handler)
 
 
+def add_custom_attributes_from_throttle_classes(attributes_list):
+    for throttle_class in api_settings.DEFAULT_THROTTLE_CLASSES:
+        if throttle_class.scope_attr not in attributes_list:
+            attributes_list.append(throttle_class.scope_attr)
+    return attributes_list
+
+
 def apply_api_view_attributes(handler, injector):
 
-    for attribute in [
+    attributes_list = [
         "authentication_classes",
         "renderer_classes",
         "parser_classes",
         "throttle_classes",
+        "throttle_scope",
         "permission_classes",
         "content_negotiation_class",
         "versioning_class",
         "metadata_class",
-    ]:
+    ]
+    attributes_list = add_custom_attributes_from_throttle_classes(attributes_list)
+    for attribute in attributes_list:
         if attribute in injector:
-            view_property = build_view_property(injector, attribute)
+            view_property = build_view_property(
+                injector, attribute, action=this.view.action
+            )
             setattr(handler, attribute, view_property)
 
 
@@ -154,7 +168,9 @@ def apply_generic_api_view_attributes(handler, injector):
         "pagination_class",
     ]:
         if attribute in injector:
-            view_property = build_view_property(injector, attribute)
+            view_property = build_view_property(
+                injector, attribute, action=this.view.action
+            )
             setattr(handler, attribute, view_property)
 
 
@@ -223,24 +239,6 @@ def get_validated_data(view, request):
     serializer = view.get_serializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     return serializer.validated_data
-
-
-def build_view_property(injector, attribute):
-    @property
-    def __attribute(self):
-        __tracebackhide__ = True
-        ns = injector.let(
-            view=self,
-            request=this.view.request,
-            args=this.view.args,
-            kwargs=this.view.kwargs,
-            user=this.request.user,
-            pk=this.kwargs["pk"],
-            action=this.view.action,
-        )
-        return getattr(ns, attribute)
-
-    return __attribute
 
 
 def build_view_action(injector, action, detail, validated_data):
